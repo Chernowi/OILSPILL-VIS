@@ -6,7 +6,7 @@ import time
 from typing import Optional, List, Dict, Tuple, Any
 
 # Import from the newly created simulation bundle for oil spill
-from simulation_bundle_oilspill import (
+from simulation_bundle import (
     AppSimConfig, WorldSimConfig, SACSimConfig, PPOSimConfig,
     MapperSimConfig, VisualizationSimConfig,
     LocationSimConfig, RandomizationRangeSimConfig,
@@ -40,26 +40,21 @@ def get_experiment_details() -> List[Dict[str, Any]]:
 
         config_json_path = os.path.join(exp_path, "config.json")
         
-        # --- MODIFIED MODEL PATH LOGIC ---
-        # Look for model.pt directly in the experiment folder
         model_path_to_use = None
         pt_files_in_exp_dir = [f for f in os.listdir(exp_path) if f.endswith(".pt")]
         
         if pt_files_in_exp_dir:
-            if "model.pt" in pt_files_in_exp_dir: # Prioritize "model.pt" if it exists
+            if "model.pt" in pt_files_in_exp_dir:
                 model_path_to_use = os.path.join(exp_path, "model.pt")
             else:
-                # If "model.pt" is not present, take the most recent .pt file
                 pt_files_in_exp_dir.sort(key=lambda f: os.path.getmtime(os.path.join(exp_path, f)), reverse=True)
                 model_path_to_use = os.path.join(exp_path, pt_files_in_exp_dir[0])
-        # --- END MODIFIED MODEL PATH LOGIC ---
         
         if os.path.exists(config_json_path) and model_path_to_use:
             try:
                 with open(config_json_path, 'r') as f:
                     config_data_dict = json.load(f)
                 
-                # Use original DefaultConfig to parse the full structure easily
                 parsed_config = DefaultConfig(**config_data_dict)
                 
                 algo = parsed_config.algorithm.lower()
@@ -140,38 +135,39 @@ def main():
     st.sidebar.caption(f"Model: {os.path.relpath(model_file_path, EXPERIMENTS_DIR)}")
 
     st.sidebar.subheader("Initial Conditions")
-    
-    seed_options = ["Random Seed"] + [str(s) for s in original_exp_config.world.seeds]
-    if original_exp_config.world.seeds: 
-        seed_options.append("Cycle From List")
-    
-    selected_seed_option = st.sidebar.selectbox("Environment Seed", seed_options, index=0)
-    
-    specific_seed_input: Optional[int] = None
-    if selected_seed_option == "Random Seed":
-        specific_seed_input = None 
-    elif selected_seed_option == "Cycle From List":
-        specific_seed_input = -1 
-    else: 
-        try: specific_seed_input = int(selected_seed_option)
-        except ValueError: st.sidebar.warning("Invalid seed selected, defaulting to random."); specific_seed_input = None
 
-    use_config_initials = st.sidebar.checkbox("Use Initial Positions from Config", value=True)
+    # --- MODIFIED INITIAL CONDITIONS LOGIC ---
+    default_random_init = (
+        original_exp_config.world.randomize_agent_initial_location or
+        original_exp_config.world.randomize_oil_cluster
+    )
+    use_random_initials = st.sidebar.checkbox(
+        "Use randomized initial positions",
+        value=default_random_init,
+        help="If checked, agent and oil spill start at random positions based on config ranges. If unchecked, you can specify fixed initial positions below."
+    )
 
-    agent_x_init_override, agent_y_init_override = None, None
-    oil_center_x_override, oil_center_y_override = None, None
-    oil_std_dev_override = None
+    agent_loc_override_tuple: Optional[Tuple[float, float]] = None
+    oil_center_override_tuple: Optional[Tuple[float, float]] = None
+    oil_std_dev_override_data: Optional[float] = None
 
-    if not use_config_initials:
+    if not use_random_initials:
         st.sidebar.markdown("---")
+        st.sidebar.markdown("**Set Specific Initial Positions:**")
+        
         st.sidebar.markdown("**Agent Initial Position (Override):**")
-        agent_x_init_override = st.sidebar.number_input("Agent X", value=original_exp_config.world.agent_initial_location.x, step=1.0, format="%.1f")
-        agent_y_init_override = st.sidebar.number_input("Agent Y", value=original_exp_config.world.agent_initial_location.y, step=1.0, format="%.1f")
+        agent_x_val = st.sidebar.number_input("Agent X", value=original_exp_config.world.agent_initial_location.x, step=1.0, format="%.1f")
+        agent_y_val = st.sidebar.number_input("Agent Y", value=original_exp_config.world.agent_initial_location.y, step=1.0, format="%.1f")
+        agent_loc_override_tuple = (agent_x_val, agent_y_val)
+
         st.sidebar.markdown("**Oil Spill Initial Setup (Override):**")
-        oil_center_x_override = st.sidebar.number_input("Oil Center X", value=original_exp_config.world.initial_oil_center.x, step=1.0, format="%.1f")
-        oil_center_y_override = st.sidebar.number_input("Oil Center Y", value=original_exp_config.world.initial_oil_center.y, step=1.0, format="%.1f")
-        oil_std_dev_override = st.sidebar.number_input("Oil Std Dev", value=original_exp_config.world.initial_oil_std_dev, step=0.1, format="%.1f")
+        oil_cx_val = st.sidebar.number_input("Oil Center X", value=original_exp_config.world.initial_oil_center.x, step=1.0, format="%.1f")
+        oil_cy_val = st.sidebar.number_input("Oil Center Y", value=original_exp_config.world.initial_oil_center.y, step=1.0, format="%.1f")
+        oil_center_override_tuple = (oil_cx_val, oil_cy_val)
+        
+        oil_std_dev_override_data = st.sidebar.number_input("Oil Std Dev", value=original_exp_config.world.initial_oil_std_dev, step=0.1, format="%.1f", min_value=0.1)
         st.sidebar.markdown("---")
+    # --- END MODIFIED INITIAL CONDITIONS LOGIC ---
 
     default_steps = original_exp_config.evaluation.max_steps or 200
     num_steps = st.sidebar.slider("Number of Simulation Steps", 50, 500, default_steps)
@@ -188,16 +184,21 @@ def main():
         num_sensors=original_exp_config.world.num_sensors,
         sensor_distance=original_exp_config.world.sensor_distance,
         sensor_radius=original_exp_config.world.sensor_radius,
+        
+        # Pass base config values; WorldSim constructor handles overrides and randomization flags
         agent_initial_location=LocationSimConfig(**original_exp_config.world.agent_initial_location.model_dump()),
-        randomize_agent_initial_location=use_config_initials and original_exp_config.world.randomize_agent_initial_location,
         agent_randomization_ranges=RandomizationRangeSimConfig(**original_exp_config.world.agent_randomization_ranges.model_dump()),
-        num_oil_points=original_exp_config.world.num_oil_points,
-        num_water_points=original_exp_config.world.num_water_points,
-        oil_cluster_std_dev_range=original_exp_config.world.oil_cluster_std_dev_range,
-        randomize_oil_cluster=use_config_initials and original_exp_config.world.randomize_oil_cluster,
-        oil_center_randomization_range=RandomizationRangeSimConfig(**original_exp_config.world.oil_center_randomization_range.model_dump()),
         initial_oil_center=LocationSimConfig(**original_exp_config.world.initial_oil_center.model_dump()),
         initial_oil_std_dev=original_exp_config.world.initial_oil_std_dev,
+        oil_center_randomization_range=RandomizationRangeSimConfig(**original_exp_config.world.oil_center_randomization_range.model_dump()),
+        oil_cluster_std_dev_range=original_exp_config.world.oil_cluster_std_dev_range,
+
+        # These flags are now directly controlled by the checkbox
+        randomize_agent_initial_location=use_random_initials,
+        randomize_oil_cluster=use_random_initials,
+        
+        num_oil_points=original_exp_config.world.num_oil_points,
+        num_water_points=original_exp_config.world.num_water_points,
         min_initial_separation_distance=original_exp_config.world.min_initial_separation_distance,
         trajectory_length=original_exp_config.world.trajectory_length,
         trajectory_feature_dim=original_exp_config.world.trajectory_feature_dim,
@@ -211,7 +212,7 @@ def main():
         success_bonus=original_exp_config.world.success_bonus,
         uninitialized_mapper_penalty=original_exp_config.world.uninitialized_mapper_penalty,
         mapper_config=MapperSimConfig(**original_exp_config.mapper.model_dump()), 
-        seeds=original_exp_config.world.seeds if selected_seed_option == "Cycle From List" else [] 
+        seeds=[] 
     )
 
     sac_sim_cfg = None; ppo_sim_cfg = None
@@ -248,24 +249,29 @@ def main():
         os.makedirs(current_run_vis_dir, exist_ok=True)
 
         st.markdown("---"); st.subheader("Simulation Results")
-        status_text = st.empty(); gif_display = st.empty()
-        metrics_display = st.empty(); reward_plot_display = st.empty()
+        
+        # --- ADDED PROGRESS BAR ---
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        gif_display = st.empty()
+        metrics_display = st.empty()
+        reward_plot_display = st.empty()
         status_text.info("Running simulation, please wait...")
-
-        agent_loc_override_tuple = (agent_x_init_override, agent_y_init_override) if not use_config_initials and agent_x_init_override is not None else None
-        oil_center_override_tuple = (oil_center_x_override, oil_center_y_override) if not use_config_initials and oil_center_x_override is not None else None
-
+        
         try:
             gif_path, final_metric, total_reward, episode_rewards = run_simulation_for_streamlit(
                 app_sim_config=app_sim_config, model_path=model_file_path,
-                initial_agent_loc_data=agent_loc_override_tuple,
-                initial_oil_center_data=oil_center_override_tuple,
-                initial_oil_std_dev_data=oil_std_dev_override if not use_config_initials else None,
-                seed_data=specific_seed_input if selected_seed_option != "Cycle From List" else None, 
+                initial_agent_loc_data=agent_loc_override_tuple, # Will be None if use_random_initials is True
+                initial_oil_center_data=oil_center_override_tuple, # Will be None if use_random_initials is True
+                initial_oil_std_dev_data=oil_std_dev_override_data, # Will be None if use_random_initials is True
+                seed_data=None, 
                 num_simulation_steps=num_steps,
-                visualization_output_dir=current_run_vis_dir
+                visualization_output_dir=current_run_vis_dir,
+                progress_bar_streamlit=progress_bar # Pass the progress bar object
             )
+            progress_bar.progress(100) # Ensure progress bar is full on completion
             status_text.success("Simulation complete!")
+            
             if gif_path and os.path.exists(gif_path): gif_display.image(gif_path, caption="Simulation Animation")
             else: gif_display.warning("GIF could not be generated or found.")
             
@@ -276,10 +282,11 @@ def main():
             if episode_rewards:
                 import pandas as pd
                 reward_df = pd.DataFrame({'Step': range(len(episode_rewards)), 'Step Reward': episode_rewards})
-                st.markdown("#### Step Rewards Over Time")
-                st.line_chart(reward_df.set_index('Step'))
+                reward_plot_display.markdown("#### Step Rewards Over Time") # Use a different empty for reward plot
+                reward_plot_display.line_chart(reward_df.set_index('Step'))
         except Exception as e:
             status_text.error(f"Simulation error: {e}"); import traceback; st.error(traceback.format_exc())
+            if progress_bar: progress_bar.progress(0) # Reset progress on error
         finally:
             if os.path.exists(current_run_vis_dir):
                 try: shutil.rmtree(current_run_vis_dir)
