@@ -16,8 +16,8 @@ from simulation_bundle import (
 # Import original DefaultConfig to help parse existing experiment configs
 from configs import DefaultConfig
 
-EXPERIMENTS_DIR = "oilspill/experiments"  # Standard directory for trained models
-TEMP_VIS_DIR_BASE = "oilspill/streamlit_temp_vis_oilspill" # Unique temp dir
+EXPERIMENTS_DIR = "experiments"  # Standard directory for trained models
+TEMP_VIS_DIR_BASE = "streamlit_temp_vis_oilspill" # Unique temp dir
 
 BASE_AGENT_TYPES = {
     "SAC_MLP": "SAC MLP (Most Recent)",
