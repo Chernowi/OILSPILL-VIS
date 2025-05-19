@@ -6,3 +6,4 @@ pydantic
 matplotlib
 Pillow
 imageio
+scipy
